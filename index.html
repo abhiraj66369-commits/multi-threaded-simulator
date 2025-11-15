@@ -506,6 +506,314 @@ function tickOnce(){
   updateStats();
 }
 
+/* -------------------------
+   UI Rendering
+   ------------------------- */
+function renderUI(){
+  // CPU slots and threads
+  renderCPUSlots();
+  // thread list
+  lanesEl.innerHTML = '';
+  // threads sorted by id
+  const sorted = threads.slice().sort((a,b)=>a.id - b.id);
+  sorted.forEach(t=>{
+    const row = document.createElement('div');
+    row.className = 'thread-row';
+    row.style.background = 'linear-gradient(90deg, rgba(255,255,255,0.01), rgba(255,255,255,0.005))';
+    row.innerHTML = `
+      <div class="thread-label">${t.name}</div>
+      <div style="flex:1" title="State: ${t.state}; Burst: ${t.burstRemaining}; Prio: ${t.priority}">
+        <div class="tiles" id="tiles-${t.id}"></div>
+      </div>
+      <div style="width:110px;text-align:right">
+        <div class="small muted">State: ${t.state}</div>
+        <div class="small muted">Burst: ${t.burstRemaining}</div>
+      </div>
+    `;
+    lanesEl.appendChild(row);
+    const tiles = document.getElementById(`tiles-${t.id}`);
+    // render last 40 history entries
+    const last = t.history.slice(-40);
+    for(const s of last){
+      const d = document.createElement('div');
+      d.className = `tile state-${s}`;
+      d.title = s;
+      tiles.appendChild(d);
+    }
+    // ensure trailing filler to show future ticks
+    for(let i=0;i<8;i++){
+      const d = document.createElement('div');
+      d.className = `tile`;
+      d.style.opacity = 0.03;
+      tiles.appendChild(d);
+    }
+  });
+
+  // thread controls (per thread actions)
+  renderThreadControls();
+  renderResources();
+  renderLogs();
+}
+
+function renderCPUSlots(){
+  cpuSlotsEl.innerHTML = '';
+  let slots = (model === 'Many-to-One') ? 1 : (model === 'One-to-One' ? Math.max(1, Math.min(threads.length, 8)) : Math.max(1, kernelThreads));
+  document.getElementById('countKernel').textContent = slots;
+  for(let i=0;i<slots;i++){
+    const slot = document.createElement('div');
+    slot.className = 'cpu-slot';
+    // show which thread is running on this slot (naive mapping)
+    const running = threads.find(t=>t.state==='Running');
+    if(running){
+      slot.innerHTML = `<div style="font-weight:700;color:#062122">${running.name}</div><div class="muted">Running</div>`;
+    } else {
+      slot.innerHTML = `<div class="muted">Idle</div>`;
+    }
+    cpuSlotsEl.appendChild(slot);
+  }
+}
+
+function renderResources(){
+  // semaphores
+  const sl = document.getElementById('semaList');
+  sl.innerHTML = '';
+  for(const name in semaphores){
+    const s = semaphores[name];
+    const div = document.createElement('div');
+    div.innerHTML = `<div><strong>${name}</strong><div class="small muted">val=${s.value} | queue=[${s.queue.map(id=>threads.find(t=>t.id===id)?.name||id).join(', ')}]</div></div><div class="badge">S</div>`;
+    sl.appendChild(div);
+  }
+  // monitors
+  const ml = document.getElementById('monList');
+  ml.innerHTML = '';
+  for(const name in monitors){
+    const m = monitors[name];
+    const ownerName = m.owner ? (threads.find(t=>t.id===m.owner)?.name || m.owner) : 'none';
+    const div = document.createElement('div');
+    div.innerHTML = `<div><strong>${name}</strong><div class="small muted">locked=${m.locked} owner=${ownerName} wait=[${m.waitq.map(id=>threads.find(t=>t.id===id)?.name||id)}]</div></div><div class="badge">M</div>`;
+    ml.appendChild(div);
+  }
+}
+
+function renderThreadControls(){
+  const box = document.getElementById('threadControls');
+  box.innerHTML = '';
+  threads.forEach(t=>{
+    const d = document.createElement('div');
+    d.style.display = 'flex';
+    d.style.flexDirection = 'column';
+    d.style.gap = '6px';
+    d.innerHTML = `
+      <div style="display:flex;gap:6px;align-items:center;justify-content:space-between">
+        <div style="font-weight:700">${t.name}</div>
+        <div style="font-size:12px;color:var(--muted)">${t.state}</div>
+      </div>
+      <div style="display:flex;gap:6px">
+        <button data-tid="${t.id}" class="btn-acquire">Acquire</button>
+        <button data-tid="${t.id}" class="btn-release">Release</button>
+        <button data-tid="${t.id}" class="btn-kill" style="background:#ff6b6b;color:white">Kill</button>
+      </div>
+    `;
+    box.appendChild(d);
+  });
+  // attach listeners
+  document.querySelectorAll('.btn-acquire').forEach(b=>{
+    b.onclick = ()=>{
+      const tid = Number(b.getAttribute('data-tid'));
+      // open a small prompt to choose semaphore or monitor
+      const choice = prompt('Acquire: type "S:name" for semaphore or "M:name" for monitor. Example: S:S1 or M:M1');
+      if(!choice) return;
+      if(choice.startsWith('S:')){
+        const name = choice.slice(2);
+        sem_wait(name, tid);
+      } else if(choice.startsWith('M:')){
+        const name = choice.slice(2);
+        monitor_enter(name, tid);
+      }
+      renderUI();
+    };
+  });
+  document.querySelectorAll('.btn-release').forEach(b=>{
+    b.onclick = ()=>{
+      const tid = Number(b.getAttribute('data-tid'));
+      const choice = prompt('Release: type "S:name" to signal semaphore or "M:name" to exit monitor. Example: S:S1 or M:M1');
+      if(!choice) return;
+      if(choice.startsWith('S:')){
+        const name = choice.slice(2);
+        sem_signal(name);
+      } else if(choice.startsWith('M:')){
+        const name = choice.slice(2);
+        monitor_exit(name);
+      }
+      renderUI();
+    };
+  });
+  document.querySelectorAll('.btn-kill').forEach(b=>{
+    b.onclick = ()=>{
+      const tid = Number(b.getAttribute('data-tid'));
+      const t = threads.find(x=>x.id===tid);
+      if(!t) return;
+      t.state = 'Terminated';
+      logEvent(`${t.name} killed`);
+      renderUI();
+    };
+  });
+}
+
+/* render logs */
+function renderLogs(){
+  logEl.innerHTML = events.slice(0,200).map(s=>`<div>${s}</div>`).join('');
+}
+
+/* update stats on header */
+function updateStats(){
+  document.getElementById('countThreads').textContent = threads.length;
+}
+
+/* -------------------------
+   UI events binding
+   ------------------------- */
+document.getElementById('modelSelect').onchange = (e)=>{
+  model = e.target.value;
+  logEvent(`Model set to ${model}`);
+  renderUI();
+};
+document.getElementById('schedSelect').onchange = (e)=>{
+  scheduler = e.target.value;
+  logEvent(`Scheduler set to ${scheduler}`);
+};
+
+document.getElementById('addThreadBtn').onclick = ()=>{
+  const burst = Math.max(1, Number(document.getElementById('burstInput').value) || 5);
+  const pr = Math.max(0, Number(document.getElementById('prioInput').value) || 1);
+  makeThread(burst, pr);
+  updateStats();
+};
+document.getElementById('addRandomBtn').onclick = ()=>{
+  const burst = Math.floor(Math.random()*8)+2;
+  const pr = Math.floor(Math.random()*3)+1;
+  makeThread(burst, pr);
+  updateStats();
+};
+
+document.getElementById('createSema').onclick = ()=>{
+  const name = document.getElementById('sname').value.trim();
+  const init = Math.max(0, Number(document.getElementById('sinit').value) || 0);
+  if(!name){ alert('Enter name'); return; }
+  createSemaphore(name, init);
+};
+
+document.getElementById('createMon').onclick = ()=>{
+  const name = document.getElementById('mname').value.trim();
+  if(!name){ alert('Enter name'); return; }
+  createMonitor(name);
+};
+
+document.getElementById('playBtn').onclick = ()=>{
+  if(running) return;
+  running = true;
+  quantum = Number(document.getElementById('quantum').value) || 300;
+  const speed = Number(document.getElementById('speed').value) || 300;
+  clearInterval(timer);
+  timer = setInterval(tickOnce, speed);
+  logEvent('Simulation started');
+};
+document.getElementById('pauseBtn').onclick = ()=>{
+  running = false;
+  clearInterval(timer);
+  timer = null;
+  logEvent('Simulation paused');
+};
+document.getElementById('stepBtn').onclick = ()=>{
+  tickOnce();
+};
+document.getElementById('resetBtn').onclick = ()=>{
+  if(confirm('Reset simulation?')) resetAll();
+};
+document.getElementById('clearLogs').onclick = ()=>{
+  events.length = 0;
+  renderLogs();
+};
+
+document.getElementById('preset1').onclick = ()=>{
+  resetAll();
+  model = 'Many-to-One';
+  document.getElementById('modelSelect').value = model;
+  scheduler = 'RoundRobin';
+  document.getElementById('schedSelect').value = scheduler;
+  createSemaphore('S1', 0);
+  makeThread(6,1,'T1');
+  makeThread(8,1,'T2');
+  makeThread(4,1,'T3');
+  logEvent('Loaded Many-to-One Demo');
+  renderUI();
+};
+document.getElementById('preset2').onclick = ()=>{
+  resetAll();
+  model = 'Many-to-Many';
+  document.getElementById('modelSelect').value = model;
+  scheduler = 'FCFS';
+  document.getElementById('schedSelect').value = scheduler;
+  kernelThreads = 3;
+  createSemaphore('SPOOL', 2);
+  for(let i=0;i<6;i++) makeThread(6,1);
+  logEvent('Loaded Semaphore Pool Demo');
+  renderUI();
+};
+document.getElementById('preset3').onclick = ()=>{
+  resetAll();
+  model = 'Many-to-Many';
+  document.getElementById('modelSelect').value = model;
+  scheduler = 'RoundRobin';
+  createMonitor('BUF');
+  // producer/consumer: producers will "enter" monitor manually via controls or we simulate some events
+  makeThread(6,1,'Producer1');
+  makeThread(6,1,'Consumer1');
+  makeThread(6,1,'Producer2');
+  logEvent('Loaded Producer/Consumer Demo (use controls to Acquire/Release monitor BUF)');
+  renderUI();
+};
+
+/* Save / Load */
+document.getElementById('exportBtn').onclick = ()=>{
+  const data = {threads, semaphores, monitors, model, scheduler, tick};
+  const blob = new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = 'scenario.json'; a.click();
+  URL.revokeObjectURL(url);
+};
+document.getElementById('importFile').onchange = (e)=>{
+  const f = e.target.files[0];
+  if(!f) return;
+  const reader = new FileReader();
+  reader.onload = (ev)=>{
+    try{
+      const data = JSON.parse(ev.target.result);
+      resetAll();
+      // restore basic structure
+      if(data.semaphores) { for(const k in data.semaphores) semaphores[k]=data.semaphores[k]; }
+      if(data.monitors) { for(const k in data.monitors) monitors[k]=data.monitors[k]; }
+      if(Array.isArray(data.threads)){
+        data.threads.forEach(t=> {
+          // reconstruct thread shallowly
+          const nt = makeThread(t.burstRemaining||5,t.priority||1,t.name||null);
+          nt.state = t.state || 'Ready';
+          nt.history = t.history || [];
+        });
+      }
+      if(data.model) { model = data.model; document.getElementById('modelSelect').value = model; }
+      if(data.scheduler) { scheduler = data.scheduler; document.getElementById('schedSelect').value = scheduler; }
+      logEvent('Scenario imported');
+      renderUI();
+    }catch(err){ alert('Invalid JSON'); }
+  };
+  reader.readAsText(f);
+};
+
+/* initialize UI */
+renderUI();
+updateStats();
+
 </script>
 </body>
 </html>
