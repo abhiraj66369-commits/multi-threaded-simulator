@@ -4,7 +4,64 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>Real-Time Multi-threaded Application Simulator</title>
-
+<style>
+  :root{
+    --bg:#0f1724; --card:#0b1220; --muted:#9aa7bf; --accent:#6ee7b7;
+    --danger:#ff6b6b; --yellow:#ffd166; --glass: rgba(255,255,255,0.04);
+    --tile-size:18px;
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:linear-gradient(180deg,#071021 0%, #0f1724 100%);color:#e6eef6;min-height:100vh;display:flex;flex-direction:column}
+  header{padding:18px 20px;display:flex;align-items:center;gap:16px;border-bottom:1px solid rgba(255,255,255,0.04)}
+  header h1{font-size:18px;margin:0}
+  header .meta{font-size:13px;color:var(--muted)}
+  .wrap{display:grid;grid-template-columns:320px 1fr 360px;gap:16px;padding:16px;align-items:start}
+  /* responsive */
+  @media (max-width:1100px){ .wrap{grid-template-columns:1fr; padding:12px} .right, .left{order:99} .center{order:1} }
+  /* cards */
+  .card{background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));border-radius:12px;padding:12px;border:1px solid rgba(255,255,255,0.03);box-shadow:0 6px 24px rgba(2,6,23,0.6)}
+  .left .card, .right .card{margin-bottom:12px}
+  label{font-size:13px;color:var(--muted);display:block;margin-bottom:6px}
+  input, select, button{font-size:14px;padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.06);background:transparent;color:inherit}
+  .row{display:flex;gap:8px;align-items:center}
+  button.primary{background:linear-gradient(90deg,#22c1c3,#6ee7b7);border:none;color:#062122;font-weight:600}
+  button.warn{background:linear-gradient(90deg,#ff8a65,#ff6b6b);border:none;color:white}
+  .controls{display:flex;flex-direction:column;gap:8px}
+  .small{font-size:12px;color:var(--muted)}
+  /* center visualization */
+  .center{display:flex;flex-direction:column;gap:12px}
+  .toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .lanes{background:linear-gradient(180deg, rgba(255,255,255,0.01), rgba(255,255,255,0.005));padding:12px;border-radius:10px;min-height:200px;overflow:auto}
+  .thread-row{display:flex;gap:8px;align-items:center;padding:6px;border-radius:8px;margin-bottom:6px}
+  .thread-label{width:90px;font-weight:700;color:#cfeef0}
+  .tiles{display:flex;gap:3px;flex-wrap:nowrap;min-width:120px;overflow:auto;padding:4px}
+  .tile{width:var(--tile-size);height:var(--tile-size);border-radius:4px;flex:0 0 auto;box-shadow:inset 0 -1px 0 rgba(0,0,0,0.2)}
+  .state-Running{background:#22c1c3}
+  .state-Ready{background:#ffd166}
+  .state-Blocked{background:#ff6b6b}
+  .state-Terminated{background:#94a3b8}
+  .state-New{background:#7c3aed}
+  .cpu-box{display:flex;gap:8px;align-items:center;padding:8px;border-radius:8px;background:linear-gradient(90deg, rgba(255,255,255,0.01), rgba(255,255,255,0.005))}
+  .cpu-slot{flex:1;padding:8px;border-radius:8px;border:1px dashed rgba(255,255,255,0.04);text-align:center;font-size:13px}
+  .log{max-height:240px;overflow:auto;padding:8px;background:rgba(0,0,0,0.12);border-radius:8px;border:1px solid rgba(255,255,255,0.02)}
+  .muted{color:var(--muted);font-size:13px}
+  .sep{height:1px;background:rgba(255,255,255,0.02);margin:8px 0;border-radius:4px}
+  /* right panel */
+  .resource{display:flex;flex-direction:column;gap:8px}
+  .resource div{display:flex;justify-content:space-between;align-items:center;padding:6px;border-radius:8px;background:var(--glass)}
+  .badge{padding:6px 8px;border-radius:999px;background:rgba(255,255,255,0.03);font-weight:600}
+  .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .footer{padding:12px;margin-top:auto;color:var(--muted);font-size:13px;text-align:center}
+  /* responsiveness for tiles scrollbars */
+  .tiles::-webkit-scrollbar{height:8px}
+  .tiles::-webkit-scrollbar-thumb{background:rgba(0,0,0,0.3);border-radius:8px}
+  /* small screens adjustments */
+  @media (max-width:600px){
+    .thread-label{width:70px;font-size:13px}
+    .badge{font-size:12px;padding:4px 6px}
+  }
+</style>
 </head>
 <body>
 <header>
