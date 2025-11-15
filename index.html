@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Real-Time Multi-threaded Application Simulator</title>
+
+</head>
+<body>
+<header>
+  <div style="display:flex;flex-direction:column">
+    <h1>Real-Time Multi-threaded Application Simulator</h1>
+    <div class="meta">Kumar Abhinash (12501247) • Ajay Upadhyay (12528614) • Lovely Professional University</div>
+  </div>
+</header>
+
+<div class="wrap">
+  <!-- LEFT: Controls -->
+  <div class="left">
+    <div class="card">
+      <label>Threading Model</label>
+      <div class="row">
+        <select id="modelSelect">
+          <option>Many-to-One</option>
+          <option>One-to-One</option>
+          <option>Many-to-Many</option>
+        </select>
+        <label style="margin-left:6px" class="small">Scheduler</label>
+        <select id="schedSelect" style="margin-left:6px">
+          <option>RoundRobin</option>
+          <option>FCFS</option>
+          <option>Priority</option>
+        </select>
+      </div>
+
+      <div class="sep"></div>
+
+      <label>Create Thread</label>
+      <div class="row" style="gap:6px">
+        <input id="burstInput" type="number" placeholder="Burst (ticks)" value="6" style="width:120px" />
+        <input id="prioInput" type="number" placeholder="Priority" value="1" style="width:90px" />
+      </div>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button id="addThreadBtn" class="primary">Add Thread</button>
+        <button id="addRandomBtn">Add Random</button>
+      </div>
+
+      <div class="sep"></div>
+
+      <label>Synchronization</label>
+      <div class="row" style="gap:6px;margin-bottom:6px">
+        <input id="sname" placeholder="Semaphore name" value="S1" style="width:120px" />
+        <input id="sinit" type="number" placeholder="Init" value="1" style="width:70px" />
+        <button id="createSema">Create</button>
+      </div>
+      <div class="row" style="gap:6px">
+        <input id="mname" placeholder="Monitor name" value="M1" style="width:120px" />
+        <button id="createMon">Create Monitor</button>
+      </div>
+
+      <div class="sep"></div>
+
+      <label>Simulation Controls</label>
+      <div class="row" style="margin-bottom:6px">
+        <button id="playBtn" class="primary">Play</button>
+        <button id="pauseBtn">Pause</button>
+        <button id="stepBtn">Step</button>
+        <button id="resetBtn" class="warn">Reset</button>
+      </div>
+      <div class="row" style="align-items:center;margin-top:8px">
+        <label class="small">Quantum (ms)</label>
+        <input id="quantum" type="number" value="300" style="width:100px;margin-left:6px" />
+        <label class="small" style="margin-left:8px">Speed</label>
+        <input id="speed" type="range" min="80" max="1000" value="300" style="flex:1;margin-left:6px" />
+      </div>
+
+      <div class="sep"></div>
+
+      <label>Presets</label>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button id="preset1">Many-to-One Demo</button>
+        <button id="preset2">Semaphore Pool</button>
+        <button id="preset3">Producer/Consumer</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <label>Save / Load Scenario</label>
+      <div class="row" style="margin-bottom:8px">
+        <button id="exportBtn">Export JSON</button>
+        <input id="importFile" type="file" accept=".json" />
+      </div>
+      <div class="sep"></div>
+      <label>Quick Tips</label>
+      <ul class="small" style="margin:8px 0 0 18px;padding:0">
+        <li>Use Step to debug tick-by-tick</li>
+        <li>Use Many-to-One to see process-wide blocking</li>
+        <li>Use semaphores to create realistic blocking</li>
+      </ul>
+    </div>
+
+  </div>
+
+  <!-- CENTER: Visualization -->
+  <div class="center">
+    <div class="card toolbar">
+      <div style="display:flex;gap:12px;align-items:center;flex:1">
+        <div><strong>Simulation</strong></div>
+        <div class="muted">Tick: <span id="tickCounter">0</span></div>
+        <div class="muted">Threads: <span id="countThreads">0</span></div>
+        <div class="muted">Kernel threads: <span id="countKernel">0</span></div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button id="clearLogs">Clear Logs</button>
+      </div>
+    </div>
+
+    <div class="card lanes" id="lanesContainer" aria-live="polite">
+      <!-- thread rows inserted here -->
+      <div id="cpuArea" style="margin-bottom:12px">
+        <label class="small" style="margin-bottom:6px;display:block">CPU / Kernel Threads</label>
+        <div id="cpuSlots" class="cpu-box"></div>
+      </div>
+
+      <div id="threadsList"></div>
+    </div>
+
+    <div class="card">
+      <label>Gantt (recent ticks)</label>
+      <div class="muted" style="font-size:13px;margin-bottom:8px">Colors: 🟢 Running • 🟡 Ready • 🔴 Blocked • ⚪ Terminated</div>
+      <div id="logArea" class="log"></div>
+    </div>
+  </div>
+
+  <!-- RIGHT: Resources & Info -->
+  <div class="right">
+    <div class="card">
+      <label>Semaphores</label>
+      <div id="semaList" class="resource"></div>
+      <div class="sep"></div>
+      <label>Monitors</label>
+      <div id="monList" class="resource"></div>
+    </div>
+
+    <div class="card">
+      <label>Thread Controls</label>
+      <div id="threadControls" class="grid-2"></div>
+    </div>
+
+    <div class="card">
+      <label>Event Log</label>
+      <div id="events" class="log"></div>
+    </div>
+  </div>
+</div>
+
+<div class="footer card" style="margin:12px 16px">
+  <div style="font-weight:700">Made for: Real-Time Multi-threaded Application Simulator</div>
+  <div class="muted">Demonstrates thread models, scheduling, semaphores, and monitors — fully client-side.</div>
+</div>
+
+
+</body>
+</html>
