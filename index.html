@@ -216,6 +216,222 @@
   <div class="muted">Demonstrates thread models, scheduling, semaphores, and monitors — fully client-side.</div>
 </div>
 
+<script>
+/*
+  Real-Time Multi-threaded Application Simulator
+  Single-file HTML/CSS/JS educational simulator.
+*/
 
+/* -------------------------
+   Simulation Data Structures
+   ------------------------- */
+let nextTid = 1;
+let tick = 0;
+let running = false;
+let timer = null;
+let quantum = 300;
+let model = 'Many-to-One';
+let scheduler = 'RoundRobin';
+let kernelThreads = 1; // for mapping pool in Many-to-Many
+const threads = []; // user threads
+const semaphores = {}; // {name: {value, queue:[]}}
+const monitors = {}; // {name: {locked:false, owner:null, waitq:[]}}
+const events = [];
+
+/* Thread object:
+  {
+    id, state, burstRemaining, priority, history[], waitingFor: {type:'sema'|'monitor', name}
+  }
+*/
+
+/* -------------------------
+   Helpers & UI references
+   ------------------------- */
+const lanesEl = document.getElementById('threadsList');
+const cpuSlotsEl = document.getElementById('cpuSlots');
+const logEl = document.getElementById('logArea');
+const eventsEl = document.getElementById('events');
+
+function logEvent(msg){
+  const time = tick;
+  events.unshift(`[t=${time}] ${msg}`);
+  if(events.length>200) events.pop();
+  eventsEl.innerHTML = events.map(s=>`<div>${s}</div>`).join('');
+}
+
+/* -------------------------
+   Simulation Engine
+   ------------------------- */
+function makeThread(burst=5, priority=1, name=null){
+  const t = {
+    id: nextTid++,
+    name: name || `T${nextTid-1}`,
+    state: 'Ready', // New, Ready, Running, Blocked, Terminated
+    burstRemaining: burst,
+    priority: priority,
+    history: [],
+    waitingFor: null,
+    kernelSlot: null
+  };
+  threads.push(t);
+  renderUI();
+  logEvent(`Created ${t.name} (burst=${burst}, prio=${priority})`);
+  return t;
+}
+
+function resetAll(){
+  nextTid = 1;
+  tick = 0;
+  running = false;
+  clearInterval(timer);
+  timer = null;
+  threads.length = 0;
+  for(const k in semaphores) delete semaphores[k];
+  for(const k in monitors) delete monitors[k];
+  events.length = 0;
+  renderUI();
+  renderResources();
+  updateStats();
+}
+
+function findReady(){
+  return threads.filter(t=>t.state==='Ready');
+}
+
+function schedulerPick(){
+  const ready = findReady();
+  if(ready.length===0) return null;
+  if(scheduler === 'FCFS') return ready[0];
+  if(scheduler === 'Priority') {
+    ready.sort((a,b)=> b.priority - a.priority || a.id - b.id);
+    return ready[0];
+  }
+  // RoundRobin simulation: rotate by last run - we'll pick first ready to be simple
+  return ready[0];
+}
+
+/* Apply model consequences when blocking occurs */
+function applyModelOnBlock(blockingThread){
+  if(model === 'Many-to-One'){
+    // simulate entire process blocking: set non-terminated threads to Blocked
+    threads.forEach(t=>{
+      if(t.state !== 'Terminated'){
+        if(t.id === blockingThread.id){
+          t.state = 'Blocked';
+          t.waitingFor = blockingThread.waitingFor;
+        } else {
+          if(t.state !== 'Terminated') t.state = 'Blocked';
+        }
+      }
+    });
+    logEvent(`(M2O) Process blocked due to ${blockingThread.name} waiting for ${blockingThread.waitingFor.type}:${blockingThread.waitingFor.name}`);
+  } else if(model === 'One-to-One'){
+    // only thread blocked -> handled elsewhere
+  } else if(model === 'Many-to-Many'){
+    // blocked thread returns kernel slot (if any)
+    if(blockingThread.kernelSlot !== null){
+      // free kernel slot
+      blockingThread.kernelSlot = null;
+      renderCPUSlots();
+    }
+  }
+}
+
+
+
+/* -------------------------
+   Tick / run loop
+   ------------------------- */
+function tickOnce(){
+  tick++;
+  document.getElementById('tickCounter').textContent = tick;
+  // choose running threads per kernel capacity (for One-to-One maybe each user thread can run -> but sim limited)
+  // We'll maintain kernelSlots count:
+  let activeKernel = (model==='One-to-One') ? threads.filter(t=>t.state==='Ready' || t.state==='Running').length : (model==='Many-to-Many' ? Math.max(1, kernelThreads) : 1);
+  // ensure activeKernel limit reasonable
+  activeKernel = Math.min(activeKernel, 10);
+
+  // if model is Many-to-One, only one can be running
+  if(model === 'Many-to-One') activeKernel = 1;
+
+  // get eligible threads for running (Ready)
+  let runCandidates = threads.filter(t=>t.state==='Running' || t.state==='Ready');
+
+  // If nothing to run, just add histories
+  if(runCandidates.length === 0){
+    threads.forEach(t=>{
+      t.history.push(t.state);
+      if(t.history.length>120) t.history.shift();
+    });
+    renderUI();
+    return;
+  }
+
+  // assign running slots (simple):
+  // 1) If someone is already Running, let them finish quantum (simulate by making them run one tick)
+  // 2) Else pick by scheduler
+  let runningNow = threads.filter(t=>t.state==='Running');
+  if(runningNow.length < activeKernel){
+    // fill slots
+    while(runningNow.length < activeKernel){
+      const pick = schedulerPick();
+      if(!pick) break;
+      pick.state = 'Running';
+      runningNow.push(pick);
+    }
+  }
+
+  // Execute work for running threads (1 unit)
+  for(const t of threads){
+    // history before update
+    t.history.push(t.state);
+    if(t.history.length>120) t.history.shift();
+  }
+
+  // copy running threads and process
+  const toProcess = threads.filter(t=>t.state==='Running');
+  for(const t of toProcess){
+    // simulate performing 1 unit
+    t.burstRemaining--;
+    // random demo: some running threads attempt to acquire semaphores/monitors (disabled by default in stable)
+    // If we want deterministic, comment randomness.
+    // If burst completes
+    if(t.burstRemaining <= 0){
+      t.state = 'Terminated';
+      t.waitingFor = null;
+      logEvent(`${t.name} terminated`);
+    } else {
+      // For fairness/slice: put back to Ready for RR
+      if(scheduler === 'RoundRobin'){
+        t.state = 'Ready';
+      } else {
+        // FCFS or Priority will keep them Running until others
+        t.state = 'Ready';
+      }
+    }
+  }
+
+  // occasionally auto-signal semaphores to show progress (demo)
+  for(const name in semaphores){
+    const s = semaphores[name];
+    // if a queue exists and value==0, try to release occasionally
+    if(s.queue.length > 0 && Math.random() < 0.05){
+      sem_signal(name);
+    }
+  }
+  // also try to release monitors occasionally for demo
+  for(const name in monitors){
+    const m = monitors[name];
+    if(m.locked && Math.random() < 0.04){
+      monitor_exit(name);
+    }
+  }
+
+  renderUI();
+  updateStats();
+}
+
+
+</script>
 </body>
 </html>
