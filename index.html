@@ -337,7 +337,82 @@ function applyModelOnBlock(blockingThread){
   }
 }
 
+/* Semaphore operations */
+function createSemaphore(name, init){
+  if(!name) return;
+  semaphores[name] = {value: init|0, queue: []};
+  renderResources();
+  logEvent(`Semaphore ${name} created (init=${init})`);
+}
+function sem_wait(name, tid){
+  const s = semaphores[name];
+  if(!s) return false;
+  const t = threads.find(x=>x.id===tid);
+  if(!t) return false;
+  if(s.value > 0){
+    s.value--;
+    logEvent(`${t.name} acquired ${name}`);
+    return true;
+  } else {
+    s.queue.push(t.id);
+    t.state = 'Blocked';
+    t.waitingFor = {type:'sema', name};
+    applyModelOnBlock(t);
+    logEvent(`${t.name} blocked on ${name}`);
+    return false;
+  }
+}
+function sem_signal(name){
+  const s = semaphores[name];
+  if(!s) return;
+  if(s.queue.length>0){
+    const wakeTid = s.queue.shift();
+    const t = threads.find(x=>x.id===wakeTid);
+    if(t){ t.state = 'Ready'; t.waitingFor = null; logEvent(`${t.name} unblocked from ${name}`); }
+  } else {
+    s.value++;
+  }
+  renderResources();
+}
 
+/* Monitor operations (simple) */
+function createMonitor(name){
+  monitors[name] = {locked:false, owner:null, waitq:[]};
+  renderResources();
+  logEvent(`Monitor ${name} created`);
+}
+function monitor_enter(name, tid){
+  const m = monitors[name];
+  const t = threads.find(x=>x.id===tid);
+  if(!m || !t) return false;
+  if(!m.locked){
+    m.locked = true;
+    m.owner = tid;
+    logEvent(`${t.name} entered monitor ${name}`);
+    return true;
+  } else {
+    m.waitq.push(tid);
+    t.state = 'Blocked';
+    t.waitingFor = {type:'monitor', name};
+    applyModelOnBlock(t);
+    logEvent(`${t.name} waiting to enter monitor ${name}`);
+    return false;
+  }
+}
+function monitor_exit(name){
+  const m = monitors[name];
+  if(!m) return;
+  if(m.waitq.length>0){
+    const nextTid = m.waitq.shift();
+    m.owner = nextTid;
+    const t = threads.find(x=>x.id===nextTid);
+    if(t){ t.state='Ready'; t.waitingFor=null; logEvent(`${t.name} acquired monitor ${name}`) }
+  } else {
+    m.locked = false;
+    m.owner = null;
+  }
+  renderResources();
+}
 
 /* -------------------------
    Tick / run loop
@@ -430,7 +505,6 @@ function tickOnce(){
   renderUI();
   updateStats();
 }
-
 
 </script>
 </body>
